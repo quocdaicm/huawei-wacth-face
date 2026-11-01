@@ -1,0 +1,51 @@
+name: Build HuaSideload IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unzip project
+        run: |
+          ZIP=$(ls *.zip | head -1)
+          mkdir -p src && unzip -q "$ZIP" -d src
+          DIR=$(find src -name project.yml -maxdepth 3 -exec dirname {} \; | head -1)
+          echo "PROJECT_DIR=$DIR" >> "$GITHUB_ENV"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          mkdir -p Config
+          printf 'HUASIDELOAD_TEAM_ID=\nHUASIDELOAD_BUNDLE_ID=com.daicamau.huasideload\n' > Config/local.env
+          ./generate.sh
+
+      - name: Build (no signing)
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          xcodebuild -project HuaSideload.xcodeproj -scheme HuaSideload \
+            -configuration Release -sdk iphoneos -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM="" build 2>&1 | tail -80
+
+      - name: Package IPA
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          APP=$(find build/Build/Products -maxdepth 2 -name "HuaSideload.app" | head -1)
+          test -n "$APP"
+          mkdir -p Payload && cp -R "$APP" Payload/
+          zip -qry HuaSideload.ipa Payload
+          mv HuaSideload.ipa "$GITHUB_WORKSPACE/HuaSideload.ipa"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HuaSideload-ipa
+          path: HuaSideload.ipa
